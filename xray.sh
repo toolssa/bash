@@ -46,7 +46,7 @@ install_xray() {
 	local ARCH TMP XRAY_BINARY
 	ARCH=$(detect_arch)
 	TMP=$(mktemp -d)
-	trap 'rm -rf "$TMP"' RETURN
+	trap "rm -rf '$TMP'" RETURN
 
 	wget -q \
 		"https://github.com/XTLS/Xray-core/releases/download/${XRAY_VERSION}/Xray-linux-${ARCH}.zip" \

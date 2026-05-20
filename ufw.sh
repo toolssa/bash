@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -uo pipefail
 trap 'echo -e "\n${RED:-}ERROR on line ${LINENO}${NC:-}"' ERR
 
 # =========================
@@ -42,8 +42,10 @@ require_root() {
 }
 
 menu_header() {
-	local title="$1" len=${#title} line
-	line=$(printf '─%.0s' $(seq 1 $((len + 4))))
+	local title="$1"
+	local len=${#title}
+	local line
+	line=$(printf '=%.0s' $(seq 1 $((len + 4))))
 	echo ""
 	echo -e "${YELLOW}┌${line}┐${NC}"
 	echo -e "${YELLOW}│  ${title}  │${NC}"

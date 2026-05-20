@@ -56,6 +56,29 @@ pause() {
 	read -r
 }
 
+menu_header() {
+	local title="$1"
+	local len=${#title}
+	local line
+	line=$(printf '=%.0s' $(seq 1 $((len + 4))))
+	echo ""
+	echo -e "${YELLOW}${line}${NC}"
+	echo -e "${YELLOW}  ${title}${NC}"
+	echo -e "${YELLOW}${line}${NC}"
+}
+
+print_menu_item() {
+	local num="$1" desc="$2" color="${3:-$WHITE}"
+	printf "${color}[%s]${NC} %s\n" "$num" "$desc"
+}
+
+require_root() {
+	if [ "${EUID:-$(id -u)}" -ne 0 ]; then
+		echo "Run as root" >&2
+		exit 1
+	fi
+}
+
 # =========================
 # HYSTERIA 2
 # =========================
@@ -111,6 +134,7 @@ apps_remove_hysteria2() {
 }
 
 apps_hysteria2_menu() {
+	require_root
 	while true; do
 		clear
 		menu_header "Hysteria 2"
