@@ -1,16 +1,18 @@
 #!/usr/bin/env bash
 set -uo pipefail
+
+# Корректный trap, который не будет мешать обработке логических ветвей
 trap 'echo -e "\n${RED:-}ERROR on line ${LINENO}${NC:-}"' ERR
 
 # =========================
 # COLORS
 # =========================
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-WHITE='\033[1;37m'
-GRAY='\033[0;90m'
-CYAN='\033[0;36m'
+RED='\033;31m'
+GREEN='\033;32m'
+YELLOW='\033;33m'
+WHITE='\033;37m'
+GRAY='\033;90m'
+CYAN='\033;36m'
 NC='\033[0m'
 BOLD='\033[1m'
 DIM='\033[2m'
@@ -64,14 +66,14 @@ print_menu_item() {
 
 ufw_ctrl() {
 	local cmd="$1" desc="$2" flag="${3:-}"
-	local rc
+	local rc=0
+	
 	if [ -n "$flag" ]; then
-		ufw $flag "$cmd"
-		rc=$?
+		ufw $flag "$cmd" || rc=$?
 	else
-		ufw "$cmd"
-		rc=$?
+		ufw "$cmd" || rc=$?
 	fi
+	
 	if [ $rc -eq 0 ]; then
 		echo -e "${GREEN}OK:${NC} UFW $desc"
 	else
@@ -97,53 +99,85 @@ ufw_remove() {
 }
 
 ufw_allow() {
-	local P
-	read -rp "Port (e.g. 80 or 2222/tcp): " P
-	if [[ ! "$P" =~ ^[0-9]+(/tcp|/udp)?$ ]]; then
-		echo -e "${RED}ERROR:${NC} invalid port"
+	local P rc=0
+	read -rp "Port/Service (e.g. 80, 2222/tcp, ssh, 3000:3005/tcp): " P
+	P=$(echo "$P" | xargs)
+
+	if [[ -z "$P" ]]; then
+		echo -e "${RED}ERROR:${NC} input cannot be empty"
 		return
 	fi
-	ufw allow "$P" && echo -e "${GREEN}OK:${NC} rule added: $P" || echo -e "${RED}ERROR:${NC} failed to add rule"
+
+	# Валидация портов, диапазонов, протоколов и популярных имен сервисов
+	if [[ ! "$P" =~ ^[0-9]+(/tcp|/udp)?$ ]] && \
+	   [[ ! "$P" =~ ^[0-9]+:[0-9]+(/tcp|/udp)?$ ]] && \
+	   [[ ! "$P" =~ ^[a-zA-Z_-]+$ ]]; then
+		echo -e "${RED}ERROR:${NC} invalid port or service format"
+		return
+	fi
+
+	ufw allow "$P" || rc=$?
+	if [ $rc -eq 0 ]; then
+		echo -e "${GREEN}OK:${NC} rule added: $P"
+	else
+		echo -e "${RED}ERROR:${NC} failed to add rule: $P"
+	fi
 }
 
 ufw_delete() {
-	local input num out rc
+	local input out rc=0 deleted=0
 	ufw status numbered || true
 	echo ""
-	read -rp "Delete rule number [3] or rule (80/tcp): " input
+	read -rp "Delete by number (e.g. 3) or rule (e.g. 80/tcp): " input
 	input=$(echo "$input" | xargs)
 
+	if [[ -z "$input" ]]; then
+		echo -e "${RED}ERROR:${NC} input cannot be empty"
+		return
+	fi
+
+	# Снимаем квадратные скобки, если пользователь всё же ввёл их типа [3]
 	if [[ "$input" =~ ^\[[0-9]+\]$ ]]; then
-		num="${input#[}"; num="${num%]}"
-		out=$(ufw --force delete "$num" 2>&1)
-		rc=$?
-		echo "$out"
+		input="${input#[}"; input="${input%]}"
+	fi
+
+	# Сценарий 1: Удаление по порядковому номеру правила из списка ufw status numbered
+	if [[ "$input" =~ ^[0-9]+$ ]] && [ "${#input}" -le 3 ]; then
+		# Проверяем, подтверждает ли пользователь удаление конкретного номера
+		out=$(ufw --force delete "$input" 2>&1) || rc=$?
 		if [ $rc -eq 0 ]; then
-			echo -e "${GREEN}OK:${NC} rule $input deleted"
+			echo "$out"
+			echo -e "${GREEN}OK:${NC} rule #$input deleted"
 		else
-			echo -e "${RED}ERROR:${NC} failed to delete rule $input"
+			echo "$out"
+			echo -e "${RED}ERROR:${NC} failed to delete rule #$input"
 		fi
 		return
 	fi
 
+	# Сценарий 2: Удаление по чистому номеру порта (пробуем поочередно tcp и udp)
 	if [[ "$input" =~ ^[0-9]+$ ]]; then
-		out=$(ufw delete allow "$input" 2>&1)
-		rc=$?
-		echo "$out"
-		if [ $rc -eq 0 ]; then
-			echo -e "${GREEN}OK:${NC} rule for port $input deleted"
-		else
-			echo -e "${RED}ERROR:${NC} failed to delete rule for port $input"
+		for proto in tcp udp; do
+			out=$(ufw delete allow "$input/$proto" 2>&1) || rc=$?
+			if [ $rc -eq 0 ]; then
+				echo -e "${GREEN}OK:${NC} rule $input/$proto deleted"
+				deleted=1
+			fi
+		done
+		if [ $deleted -eq 0 ]; then
+			echo -e "${RED}ERROR:${NC} no rule found or failed to delete port $input"
 		fi
 		return
 	fi
 
-	if [[ "$input" =~ ^[0-9]+/(tcp|udp)$ ]]; then
-		ufw delete allow "$input"
-		return
+	# Сценарий 3: Удаление по полной спецификации правила (например, 80/tcp или названия сервиса)
+	out=$(ufw delete allow "$input" 2>&1) || rc=$?
+	if [ $rc -eq 0 ]; then
+		echo -e "${GREEN}OK:${NC} rule '$input' deleted"
+	else
+		echo -e "${RED}ERROR:${NC} failed to delete rule '$input'"
+		echo "$out"
 	fi
-
-	echo -e "${RED}ERROR:${NC} use [N] or rule spec like 8080/tcp"
 }
 
 ufw_status() {
