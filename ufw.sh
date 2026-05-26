@@ -127,7 +127,14 @@ ufw_delete() {
 	fi
 
 	if [[ "$input" =~ ^[0-9]+$ ]]; then
-		ufw --force delete "$input"
+		out=$(ufw delete allow "$input" 2>&1)
+		rc=$?
+		echo "$out"
+		if [ $rc -eq 0 ]; then
+			echo -e "${GREEN}OK:${NC} rule for port $input deleted"
+		else
+			echo -e "${RED}ERROR:${NC} failed to delete rule for port $input"
+		fi
 		return
 	fi
 
