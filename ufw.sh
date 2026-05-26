@@ -5,14 +5,14 @@ set -uo pipefail
 trap 'echo -e "\n${RED:-}ERROR on line ${LINENO}${NC:-}"' ERR
 
 # =========================
-# COLORS
+# COLORS (Fixed ANSI sequences)
 # =========================
-RED='\033;31m'
-GREEN='\033;32m'
-YELLOW='\033;33m'
-WHITE='\033;37m'
-GRAY='\033;90m'
-CYAN='\033;36m'
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+WHITE='\033[1;37m'
+GRAY='\033[0;90m'
+CYAN='\033[0;36m'
 NC='\033[0m'
 BOLD='\033[1m'
 DIM='\033[2m'
@@ -143,7 +143,6 @@ ufw_delete() {
 
 	# Сценарий 1: Удаление по порядковому номеру правила из списка ufw status numbered
 	if [[ "$input" =~ ^[0-9]+$ ]] && [ "${#input}" -le 3 ]; then
-		# Проверяем, подтверждает ли пользователь удаление конкретного номера
 		out=$(ufw --force delete "$input" 2>&1) || rc=$?
 		if [ $rc -eq 0 ]; then
 			echo "$out"
