@@ -107,19 +107,36 @@ ufw_allow() {
 }
 
 ufw_delete() {
-	local input
+	local input num out rc
 	ufw status numbered || true
 	echo ""
 	read -rp "Delete rule number [3] or rule (80/tcp): " input
 	input=$(echo "$input" | xargs)
 
-	if [[ "$input" =~ ^[0-9]+$ ]]; then
-		ufw --force delete "$input" >/dev/null 2>&1 && echo -e "${GREEN}OK:${NC} rule $input deleted" || echo -e "${RED}ERROR:${NC} failed to delete rule $input"
-	elif [[ "$input" =~ ^[0-9]+/(tcp|udp)$ ]]; then
-		ufw --force delete allow "$input" >/dev/null 2>&1 && echo -e "${GREEN}OK:${NC} rule $input deleted" || echo -e "${RED}ERROR:${NC} failed to delete rule $input"
-	else
-		echo -e "${RED}ERROR:${NC} use number or rule spec like 8080/tcp"
+	if [[ "$input" =~ ^\[[0-9]+\]$ ]]; then
+		num="${input#[}"; num="${num%]}"
+		out=$(ufw --force delete "$num" 2>&1)
+		rc=$?
+		echo "$out"
+		if [ $rc -eq 0 ]; then
+			echo -e "${GREEN}OK:${NC} rule $input deleted"
+		else
+			echo -e "${RED}ERROR:${NC} failed to delete rule $input"
+		fi
+		return
 	fi
+
+	if [[ "$input" =~ ^[0-9]+$ ]]; then
+		ufw --force delete "$input"
+		return
+	fi
+
+	if [[ "$input" =~ ^[0-9]+/(tcp|udp)$ ]]; then
+		ufw delete allow "$input"
+		return
+	fi
+
+	echo -e "${RED}ERROR:${NC} use [N] or rule spec like 8080/tcp"
 }
 
 ufw_status() {
