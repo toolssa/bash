@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -uo pipefail
 trap 'echo -e "\n${RED:-}ERROR on line ${LINENO}${NC:-}"' ERR
 
 # =========================
@@ -73,10 +73,13 @@ DOCKER_SOURCES="/etc/apt/sources.list.d/docker.sources"
 remove_conflicting_packages() {
 	echo -e "${YELLOW}[*]${NC} Removing conflicting packages..."
 
-	CONFLICTING=$(dpkg --get-selections 2>/dev/null | grep -E 'docker.io|docker-compose|docker-doc|podman-docker|containerd|runc' | awk '{print $1}' | tr '\n' ' ' || true)
+	# Изолируем grep внутри подоболочки, чтобы pipefail не ронял скрипт на чистой системе
+	local CONFLICTING
+	CONFLICTING=$(dpkg --get-selections 2>/dev/null | { grep -E 'docker.io|docker-compose|docker-doc|podman-docker|containerd|runc' || true; } | awk '{print $1}' | tr '\n' ' ')
+	CONFLICTING=$(echo "$CONFLICTING" | xargs)
 
 	if [ -n "$CONFLICTING" ]; then
-		apt remove -y $CONFLICTING
+		apt remove -y $CONFLICTING || true
 		echo -e "${GREEN}OK:${NC} conflicting packages removed"
 	else
 		echo -e "${GRAY}No conflicting packages found${NC}"
@@ -84,9 +87,9 @@ remove_conflicting_packages() {
 }
 
 add_docker_repository() {
-	local CODENAME ARCH
+	local CODENAME ARCH rc=0
 
-	if ! grep -qi debian /etc/os-release; then
+	if ! grep -qi 'debian' /etc/os-release; then
 		echo -e "${RED}ERROR:${NC} Debian required"
 		return 1
 	fi
@@ -101,12 +104,12 @@ add_docker_repository() {
 
 	echo -e "${YELLOW}[*]${NC} Adding Docker repository..."
 
-	apt update
-	apt install -y ca-certificates curl
+	apt update || true
+	apt install -y ca-certificates curl || return 1
 
 	install -m 0755 -d /etc/apt/keyrings
 
-	curl -fsSL https://download.docker.com/linux/debian/gpg -o "$DOCKER_GPG"
+	curl -fsSL https://download.docker.com/linux/debian/gpg -o "$DOCKER_GPG" || return 1
 	chmod a+r "$DOCKER_GPG"
 
 	cat > "$DOCKER_SOURCES" <<EOF
@@ -118,22 +121,35 @@ Architectures: $ARCH
 Signed-By: $DOCKER_GPG
 EOF
 
-	apt update
-	echo -e "${GREEN}OK:${NC} Docker repository added"
+	apt update || rc=$?
+	if [ $rc -eq 0 ]; then
+		echo -e "${GREEN}OK:${NC} Docker repository added"
+	else
+		echo -e "${RED}ERROR:${NC} failed to update package index with Docker repo"
+		return 1
+	fi
 }
 
 install_docker_packages() {
 	echo -e "${YELLOW}[*]${NC} Installing Docker packages..."
+	local rc=0
 
-	apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-
-	echo -e "${GREEN}OK:${NC} Docker packages installed"
+	apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin || rc=$?
+	
+	if [ $rc -eq 0 ]; then
+		echo -e "${GREEN}OK:${NC} Docker packages installed"
+	else
+		echo -e "${RED}ERROR:${NC} failed to install Docker packages"
+		return 1
+	fi
 }
 
 add_user_to_docker_group() {
-	if [ -n "${SUDO_USER:-}" ]; then
+	if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ]; then
+		getent group docker >/dev/null || groupadd docker
 		usermod -aG docker "$SUDO_USER"
-		echo -e "${GREEN}OK:${NC} user $SUDO_USER added to docker group"
+		echo -e "${GREEN}OK:${NC} user '$SUDO_USER' added to docker group"
+		echo -e "${YELLOW}Notice:${NC} log out and log back in for group changes to take effect"
 	fi
 }
 
@@ -146,11 +162,11 @@ docker_install() {
 	fi
 
 	remove_conflicting_packages
-	add_docker_repository
-	install_docker_packages
+	add_docker_repository || return
+	install_docker_packages || return
 	add_user_to_docker_group
 
-	echo -e "${GREEN}OK:${NC} Docker installed"
+	echo -e "${GREEN}OK:${NC} Docker installed successfully"
 }
 
 docker_remove() {
@@ -160,14 +176,16 @@ docker_remove() {
 		return
 	fi
 
-	echo -e "${YELLOW}[*]${NC} Removing Docker packages..."
+	echo -e "${YELLOW}[*]${NC} Removing Docker packages and data..."
 
-	apt remove -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin docker-ce-rootless-extras
-	apt purge -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin docker-ce-rootless-extras
+	# '|| true' гарантирует, что скрипт не вылетит, если что-то уже было удалено руками
+	apt remove -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin docker-ce-rootless-extras || true
+	apt purge -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin docker-ce-rootless-extras || true
+	
 	rm -rf /var/lib/docker /var/lib/containerd
 	rm -f "$DOCKER_GPG" "$DOCKER_SOURCES"
 
-	echo -e "${GREEN}OK:${NC} Docker removed"
+	echo -e "${GREEN}OK:${NC} Docker completely removed"
 }
 
 docker_status() {
@@ -201,7 +219,7 @@ docker_menu() {
 
 	while true; do
 		clear
-		menu_header "Docker"
+		menu_header "Docker Manager"
 		echo ""
 		print_menu_item "1" "Install Docker" "$GREEN"
 		print_menu_item "2" "Remove Docker" "$RED"
@@ -226,5 +244,5 @@ docker_menu() {
 
 # ===== MAIN =====
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
-	docker_menu
+	ufw_menu
 fi
