@@ -244,5 +244,5 @@ docker_menu() {
 
 # ===== MAIN =====
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
-	ufw_menu
+	docker_menu
 fi
