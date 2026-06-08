@@ -128,7 +128,7 @@ ufw_delete() {
 	local input out rc=0 deleted=0
 	ufw status numbered || true
 	echo ""
-	read -rp "Delete by number (e.g. 3) or rule (e.g. 80/tcp): " input
+	read -rp "Delete port (443) or rule (80/tcp): " input
 	input=$(echo "$input" | xargs)
 
 	if [[ -z "$input" ]]; then
@@ -136,47 +136,21 @@ ufw_delete() {
 		return
 	fi
 
-	# Снимаем квадратные скобки, если пользователь всё же ввёл их типа [3]
-	if [[ "$input" =~ ^\[[0-9]+\]$ ]]; then
-		input="${input#[}"; input="${input%]}"
-	fi
-
-	# Сценарий 1: Удаление по порядковому номеру правила из списка ufw status numbered
-	if [[ "$input" =~ ^[0-9]+$ ]] && [ "${#input}" -le 3 ]; then
-		out=$(ufw --force delete "$input" 2>&1) || rc=$?
-		if [ $rc -eq 0 ]; then
-			echo "$out"
-			echo -e "${GREEN}OK:${NC} rule #$input deleted"
-		else
-			echo "$out"
-			echo -e "${RED}ERROR:${NC} failed to delete rule #$input"
-		fi
-		return
-	fi
-
-	# Сценарий 2: Удаление по чистому номеру порта (пробуем поочередно tcp и udp)
+	# Bare port — try tcp/udp, twice each (v4 + v6)
 	if [[ "$input" =~ ^[0-9]+$ ]]; then
 		for proto in tcp udp; do
 			out=$(ufw delete allow "$input/$proto" 2>&1) || rc=$?
-			if [ $rc -eq 0 ]; then
-				echo -e "${GREEN}OK:${NC} rule $input/$proto deleted"
-				deleted=1
-			fi
+			[ $rc -eq 0 ] && deleted=1
+			out=$(ufw delete allow "$input/$proto" 2>&1) || rc=$?
+			[ $rc -eq 0 ] && deleted=1
 		done
-		if [ $deleted -eq 0 ]; then
-			echo -e "${RED}ERROR:${NC} no rule found or failed to delete port $input"
-		fi
+		[ $deleted -eq 0 ] && echo -e "${RED}ERROR:${NC} no rule found for port $input" || echo -e "${GREEN}OK:${NC} port $input deleted"
 		return
 	fi
 
-	# Сценарий 3: Удаление по полной спецификации правила (например, 80/tcp или названия сервиса)
+	# Full spec — delete directly
 	out=$(ufw delete allow "$input" 2>&1) || rc=$?
-	if [ $rc -eq 0 ]; then
-		echo -e "${GREEN}OK:${NC} rule '$input' deleted"
-	else
-		echo -e "${RED}ERROR:${NC} failed to delete rule '$input'"
-		echo "$out"
-	fi
+	[ $rc -eq 0 ] && echo -e "${GREEN}OK:${NC} rule '$input' deleted" || { echo -e "${RED}ERROR:${NC} failed to delete '$input'"; echo "$out"; }
 }
 
 ufw_status() {
