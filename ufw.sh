@@ -136,12 +136,12 @@ ufw_delete() {
 		return
 	fi
 
-	# Bare port — try tcp/udp, twice each (v4 + v6)
+	# Bare port — try plain, tcp, udp; twice each (v4 + v6)
 	if [[ "$input" =~ ^[0-9]+$ ]]; then
-		for proto in tcp udp; do
-			out=$(ufw delete allow "$input/$proto" 2>&1) || rc=$?
+		for spec in "$input" "$input/tcp" "$input/udp"; do
+			out=$(ufw delete allow "$spec" 2>&1) || rc=$?
 			[ $rc -eq 0 ] && deleted=1
-			out=$(ufw delete allow "$input/$proto" 2>&1) || rc=$?
+			out=$(ufw delete allow "$spec" 2>&1) || rc=$?
 			[ $rc -eq 0 ] && deleted=1
 		done
 		[ $deleted -eq 0 ] && echo -e "${RED}ERROR:${NC} no rule found for port $input" || echo -e "${GREEN}OK:${NC} port $input deleted"
