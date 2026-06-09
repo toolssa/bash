@@ -91,8 +91,8 @@ id -u mita &>/dev/null || useradd -r -s /bin/false mita
 GEN_USER="mieru_user_$(openssl rand -hex 3)"
 GEN_PASS=$(openssl rand -base64 24 | tr -d '/"+=')
 
-# 8. Создание первичной конфигурации JSON
-cat <<EOF > /etc/mita/server.json
+# 8. Создание конфигурации JSON
+cat <<EOF > /etc/mita/config.json
 {
   "portBindings": [
     { "portRange": "2012-2022", "protocol": "TCP" },
@@ -104,40 +104,11 @@ cat <<EOF > /etc/mita/server.json
 }
 EOF
 
-# Выставляем права ДО применения конфига, чтобы тест от mita прошел успешно
+# Выставляем права на директорию конфигурации
 chown -R mita:mita /etc/mita
+chmod 600 /etc/mita/config.json
 
-# 9. Инициализация конфигурации через внутренний компилятор mita
-log "Валидация и применение конфигурации..."
-/usr/local/bin/mita apply config /etc/mita/server.json
-
-if [[ -f /etc/mita/server.conf.pb ]]; then
-    chown mita:mita /etc/mita/server.conf.pb
-    chmod 600 /etc/mita/server.conf.pb
-else
-    die "Критическая ошибка: Бинарный файл конфигурации server.conf.pb не сгенерирован."
-fi
-
-# 10. Тестирование режима работы mita от имени пользователя mita
-log "Тестирование режима запуска бинарника (Foreground vs Daemon)..."
-
-# Запускаем тест от изолированного пользователя, чтобы права на файлы не улетели к root
-sudo -u mita /usr/local/bin/mita start >/dev/null 2>&1 &
-TEST_PID=$!
-
-sleep 2
-
-if kill -0 "$TEST_PID" 2>/dev/null; then
-    log "Определен режим запуска: Foreground (Блокирующий). Используем команду 'start'."
-    EXEC_CMD="/usr/local/bin/mita start"
-    kill "$TEST_PID" 2>/dev/null || true
-    sleep 1 # Даем ядру время освободить порты после теста
-else
-    warn "Команда 'mita start' уходит в фон или завершается. Переключаемся на резервный режим 'run'..."
-    EXEC_CMD="/usr/local/bin/mita run"
-fi
-
-# 11. Создание и регистрация службы systemd
+# 9. Создание и регистрация службы systemd
 log "Регистрация службы systemd..."
 cat <<EOF > /etc/systemd/system/mita.service
 [Unit]
@@ -149,7 +120,10 @@ Type=simple
 User=mita
 Group=mita
 WorkingDirectory=/etc/mita
-ExecStart=${EXEC_CMD}
+Environment="MITA_CONFIG_JSON_FILE=/etc/mita/config.json"
+RuntimeDirectory=mita
+RuntimeDirectoryMode=0755
+ExecStart=/usr/local/bin/mita run
 Restart=on-failure
 RestartSec=5
 
@@ -157,7 +131,8 @@ RestartSec=5
 WantedBy=multi-user.target
 EOF
 
-# Запуск демона
+# 10. Запуск демона
+log "Запуск службы mita..."
 systemctl daemon-reload
 systemctl enable mita --now
 
@@ -171,7 +146,7 @@ if systemctl is-active --quiet mita; then
     echo -e "Пользователь (Username):  ${GEN_USER}"
     echo -e "Пароль (Password):        ${GEN_PASS}"
     echo -e "Порты (Ports):            2012-2022 (TCP/UDP мультипорт)"
-    echo -e "Файл конфигурации:        /etc/mita/server.json"
+    echo -e "Файл конфигурации:        /etc/mita/config.json"
     echo -e "${GREEN}====================================================${RESET}"
     warn "Убедитесь, что порты диапазона 2012-2022 открыты в UFW или внешнем файрволе провайдера!"
 else
