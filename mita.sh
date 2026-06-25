@@ -14,7 +14,15 @@ die() { echo -e "${RED}[ERROR]${RESET} $1"; exit 1; }
 # 1. Проверка прав суперпользователя
 [[ $EUID -eq 0 ]] || die "Этот скрипт необходимо запускать от имени root (через sudo)"
 
-# 2. Автоматическое определение архитектуры процессора
+# 2. Проверка повторной установки
+if [[ -f /usr/local/bin/mita ]]; then
+    warn "mita уже установлен ($(mita version 2>/dev/null || echo 'версия неизвестна'))."
+    warn "Повторная установка перезапишет конфигурацию в /etc/mita/config.json!"
+    read -r -p "Продолжить? [y/N] " CONFIRM
+    [[ "$CONFIRM" =~ ^[Yy]$ ]] || die "Установка отменена пользователем."
+fi
+
+# 3. Автоматическое определение архитектуры процессора
 ARCH=$(uname -m)
 case "$ARCH" in
     x86_64)  MITA_ARCH="amd64" ;;
@@ -40,7 +48,7 @@ if [ ${#MISSING_CMDS[@]} -ne 0 ]; then
     apt-get update -qq && apt-get install -y "${MISSING_CMDS[@]}" -qq >/dev/null
 fi
 
-# 3. Запрос к GitHub API с обработкой ошибок
+# 4. Запрос к GitHub API с обработкой ошибок
 log "Запрос информации о последнем релизе mita..."
 REPO="enfein/mieru"
 API_URL="https://api.github.com/repos/${REPO}/releases/latest"
@@ -55,21 +63,21 @@ fi
 LATEST_TAG=$(echo "$LATEST_RELEASE_JSON" | jq -r '.tag_name')
 log "Найдена актуальная версия: $LATEST_TAG"
 
-# 4. Строгий парсинг прямой ссылки на .tar.gz архив
+# 5. Строгий парсинг прямой ссылки на .tar.gz архив
 DOWNLOAD_URL=$(echo "$LATEST_RELEASE_JSON" | jq -r --arg arch "$MITA_ARCH" '.assets[] | select(.name | test("^mita.*linux_" + $arch + "\\.tar\\.gz$")) | .browser_download_url' | head -n 1)
 
 if [[ -z "$DOWNLOAD_URL" || "$DOWNLOAD_URL" == "null" ]]; then
     die "Критическая ошибка: Не удалось найти подходящий архив (.tar.gz) для архитектуры linux_${MITA_ARCH}."
 fi
 
-# 5. Скачивание во временную директорию с гарантированной очисткой
+# 6. Скачивание во временную директорию с гарантированной очисткой
 TMP_DIR=$(mktemp -d)
 trap 'rm -rf "$TMP_DIR"' EXIT # Удалит папку при любом исходе работы скрипта
 cd "$TMP_DIR"
 log "Скачивание релиза..."
-curl -fSsLO "$DOWNLOAD_URL"
+curl -fSsLO "$DOWNLOAD_URL" || die "Не удалось скачать архив: $DOWNLOAD_URL"
 
-# 6. Распаковка и установка исполняемого файла
+# 7. Распаковка и установка исполняемого файла
 log "Распаковка и перенос бинарного файла..."
 ARCHIVE=$(basename "$DOWNLOAD_URL")
 tar -xzf "$ARCHIVE"
@@ -82,7 +90,7 @@ mv mita /usr/local/bin/mita
 chmod +x /usr/local/bin/mita
 log "Исполняемый файл успешно установлен в /usr/local/bin/mita"
 
-# 7. Подготовка системного окружения и структуры директорий
+# 8. Подготовка системного окружения и структуры директорий
 log "Настройка системного пользователя и путей..."
 mkdir -p /etc/mita
 id -u mita &>/dev/null || useradd -r -s /bin/false mita
@@ -91,7 +99,7 @@ id -u mita &>/dev/null || useradd -r -s /bin/false mita
 GEN_USER="mieru_user_$(openssl rand -hex 3)"
 GEN_PASS=$(openssl rand -base64 24 | tr -d '/"+=')
 
-# 8. Создание конфигурации JSON
+# 9. Создание конфигурации JSON
 cat <<EOF > /etc/mita/config.json
 {
   "portBindings": [
@@ -108,7 +116,7 @@ EOF
 chown -R mita:mita /etc/mita
 chmod 600 /etc/mita/config.json
 
-# 9. Создание и регистрация службы systemd
+# 10. Создание и регистрация службы systemd
 log "Регистрация службы systemd..."
 cat <<EOF > /etc/systemd/system/mita.service
 [Unit]
@@ -131,13 +139,13 @@ RestartSec=5
 WantedBy=multi-user.target
 EOF
 
-# 10. Запуск демона
+# 11. Запуск демона
 log "Запуск службы mita..."
 systemctl daemon-reload
-systemctl enable mita --now
+systemctl enable mita
+systemctl start mita || die "Служба создана, но не смогла запуститься. Выполните для диагностики: journalctl -u mita -n 50"
 
 # Финальная верификация статуса
-sleep 2
 if systemctl is-active --quiet mita; then
     echo -e "\n${GREEN}====================================================${RESET}"
     log "Сервер mita успешно развернут и запущен!"
@@ -149,6 +157,7 @@ if systemctl is-active --quiet mita; then
     echo -e "Файл конфигурации:        /etc/mita/config.json"
     echo -e "${GREEN}====================================================${RESET}"
     warn "Убедитесь, что порты диапазона 2012-2022 открыты в UFW или внешнем файрволе провайдера!"
+    warn "Убедитесь, что время на клиенте синхронизировано с сервером (разница не более 30 сек)!"
 else
     die "Служба создана, но не смогла запуститься. Выполните для диагностики: journalctl -u mita -n 50"
 fi
